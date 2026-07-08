@@ -3,5 +3,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  base: '/revision-codigo/'
+  base: '/revision-codigo/',
+  build: {
+    outDir: 'docs'
+  }
 });
