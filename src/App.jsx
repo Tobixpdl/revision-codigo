@@ -20,9 +20,9 @@ import {
   calculatePercent,
   createPackId,
   filterExercises,
-  getRandomExercise,
   incrementMapValue,
-  resolveDuplicateIds
+  resolveDuplicateIds,
+  shuffleExercises
 } from './utils/exerciseHelpers.js';
 import './styles.css';
 
@@ -33,12 +33,40 @@ const INITIAL_FILTERS = {
   dificultad: ''
 };
 
+const EMPTY_ROUND = {
+  status: 'idle',
+  filters: INITIAL_FILTERS,
+  mode: 'sequential',
+  total: 0,
+  answered: 0,
+  correct: 0,
+  incorrect: 0,
+  wrongIds: [],
+  resultsById: {},
+  attempts: [],
+  startedAt: null,
+  completedAt: null,
+  passNumber: 0,
+  isRetry: false
+};
+
 const THEME_STORAGE_KEY = 'revision-codigo-theme';
 
 function loadThemePreference() {
   if (typeof window === 'undefined') return 'light';
   const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
   return savedTheme === 'dark' ? 'dark' : 'light';
+}
+
+function cloneFilters(nextFilters) {
+  return {
+    ...INITIAL_FILTERS,
+    ...(nextFilters || {})
+  };
+}
+
+function buildOrderedPool(pool, selectedMode) {
+  return selectedMode === 'random' ? shuffleExercises(pool) : [...pool];
 }
 
 function ConfirmDialog({ dialog, onCancel, onConfirm }) {
@@ -76,6 +104,61 @@ function ConfirmDialog({ dialog, onCancel, onConfirm }) {
   );
 }
 
+function RoundSummary({ round, onRetryWrong, onFinishRound }) {
+  const percent = calculatePercent(round.correct, round.total);
+  const hasWrongAnswers = round.incorrect > 0;
+
+  return (
+    <section className="card exercise-card">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Ronda finalizada</p>
+          <h2>Resultado de la práctica</h2>
+        </div>
+      </div>
+
+      <p>
+        Te equivocaste en <strong>{round.incorrect}</strong> de <strong>{round.total}</strong> ejercicio(s). Tu acierto actual es{' '}
+        <strong>{percent}%</strong>.
+      </p>
+
+      <div className="stat-grid">
+        <div className="stat-tile">
+          <span>Total de la ronda</span>
+          <strong>{round.total}</strong>
+        </div>
+        <div className="stat-tile">
+          <span>Correctas</span>
+          <strong>{round.correct}</strong>
+        </div>
+        <div className="stat-tile">
+          <span>Erradas</span>
+          <strong>{round.incorrect}</strong>
+        </div>
+        <div className="stat-tile">
+          <span>Acierto</span>
+          <strong>{percent}%</strong>
+        </div>
+      </div>
+
+      {hasWrongAnswers ? (
+        <p className="muted">Podés repetir solamente los ejercicios errados o terminar y guardar este resultado en estadísticas.</p>
+      ) : (
+        <p className="muted">No quedan ejercicios errados para repetir. Podés terminar y guardar la ronda.</p>
+      )}
+
+      <div className="button-row">
+        <button type="button" className="secondary-button" onClick={onRetryWrong} disabled={!hasWrongAnswers}>
+          Repetir errados
+        </button>
+        <button type="button" className="primary-button" onClick={onFinishRound}>
+          Terminar y guardar estadísticas
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function App() {
   const [exercises, setExercises] = useState(() => loadExercises());
   const [packs, setPacks] = useState(() => loadPacks());
@@ -89,14 +172,15 @@ function App() {
   const [selectedCodeIsOk, setSelectedCodeIsOk] = useState(false);
   const [corrected, setCorrected] = useState(false);
   const [result, setResult] = useState(null);
-  const [sessionStats, setSessionStats] = useState({ answered: 0, correct: 0, incorrect: 0 });
+  const [practiceRound, setPracticeRound] = useState(EMPTY_ROUND);
   const [notice, setNotice] = useState('');
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [theme, setTheme] = useState(() => loadThemePreference());
 
   const filteredExercises = useMemo(() => filterExercises(exercises, filters), [exercises, filters]);
   const globalPercent = calculatePercent(stats.correct, stats.answered);
-  const sessionPercent = calculatePercent(sessionStats.correct, sessionStats.answered);
+  const roundPercent = calculatePercent(practiceRound.correct, practiceRound.total || practiceRound.answered);
+  const currentPassFinished = practicePool.length > 0 && currentIndex + 1 >= practicePool.length;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -228,7 +312,7 @@ function App() {
   function handleResetStats() {
     askForConfirmation({
       title: 'Resetear estadísticas',
-      message: 'Se van a borrar el puntaje global, los errores por categoría y el historial de respuestas.',
+      message: 'Se van a borrar el puntaje global, los errores por categoría, las rondas guardadas y el historial de respuestas.',
       detail: 'Los ejercicios importados no se eliminan.',
       confirmText: 'Resetear estadísticas',
       onConfirm: () => {
@@ -257,78 +341,142 @@ function App() {
     });
   }
 
-  function startPractice() {
-    const pool = filterExercises(exercises, filters);
+  function startPractice(nextFilters = filters, nextMode = mode) {
+    const roundFilters = cloneFilters(nextFilters);
+    const pool = filterExercises(exercises, roundFilters);
 
     if (pool.length === 0) {
       setPracticePool([]);
       setCurrentExercise(null);
+      setPracticeRound(EMPTY_ROUND);
       showNotice('No hay ejercicios que coincidan con esos filtros.');
       return;
     }
 
-    setPracticePool(pool);
-    setSessionStats({ answered: 0, correct: 0, incorrect: 0 });
-    clearAnswerState();
+    const orderedPool = buildOrderedPool(pool, nextMode);
+    const startedAt = new Date().toISOString();
 
-    if (mode === 'random') {
-      const randomExercise = getRandomExercise(pool);
-      setCurrentExercise(randomExercise);
-      setCurrentIndex(pool.findIndex((exercise) => exercise.id === randomExercise.id));
-    } else {
-      setCurrentIndex(0);
-      setCurrentExercise(pool[0]);
+    setPracticePool(orderedPool);
+    setCurrentIndex(0);
+    setCurrentExercise(orderedPool[0]);
+    setPracticeRound({
+      ...EMPTY_ROUND,
+      status: 'active',
+      filters: roundFilters,
+      mode: nextMode,
+      total: orderedPool.length,
+      startedAt,
+      passNumber: 1
+    });
+    clearAnswerState();
+    showNotice(`Ronda iniciada con ${orderedPool.length} ejercicio(s).`);
+  }
+
+  function requestStartRandomPractice() {
+    const launchRandomRound = () => {
+      setMode('random');
+      startPractice(filters, 'random');
+    };
+
+    if (currentExercise || practiceRound.status === 'summary') {
+      askForConfirmation({
+        title: 'Empezar ronda aleatoria',
+        message: 'Se va a reemplazar la práctica actual por una nueva ronda aleatoria con los filtros seleccionados.',
+        detail: 'La ronda actual no se guardará si todavía no tocaste “Terminar y guardar estadísticas”.',
+        confirmText: 'Empezar ronda',
+        onConfirm: launchRandomRound
+      });
+      return;
     }
+
+    launchRandomRound();
   }
 
   function goToExercise(index, pool = practicePool) {
     if (!pool.length) return;
-    const safeIndex = ((index % pool.length) + pool.length) % pool.length;
-    setCurrentIndex(safeIndex);
-    setCurrentExercise(pool[safeIndex]);
+    if (index < 0 || index >= pool.length) return;
+
+    setCurrentIndex(index);
+    setCurrentExercise(pool[index]);
     clearAnswerState();
+  }
+
+  function showRoundSummary() {
+    setCurrentExercise(null);
+    setPracticePool([]);
+    setCurrentIndex(0);
+    clearAnswerState();
+    setPracticeRound((currentRound) => ({
+      ...currentRound,
+      status: 'summary',
+      completedAt: new Date().toISOString()
+    }));
   }
 
   function nextExercise() {
     if (!practicePool.length) return;
 
-    if (mode === 'random') {
-      randomExercise();
+    if (!corrected) {
+      showNotice('Primero corregí el ejercicio actual para avanzar.');
+      return;
+    }
+
+    if (currentPassFinished) {
+      showRoundSummary();
       return;
     }
 
     goToExercise(currentIndex + 1);
   }
 
-  function randomExercise() {
-    const pool = practicePool.length ? practicePool : filteredExercises;
-    if (!pool.length) {
-      showNotice('No hay ejercicios disponibles para elegir aleatoriamente.');
+  function handleRepeatWrong() {
+    const wrongIds = practiceRound.wrongIds || [];
+
+    if (wrongIds.length === 0) {
+      showNotice('No quedan ejercicios errados para repetir.');
       return;
     }
 
-    const exercise = getRandomExercise(pool);
-    setPracticePool(pool);
-    setCurrentExercise(exercise);
-    setCurrentIndex(pool.findIndex((item) => item.id === exercise.id));
+    const wrongPool = wrongIds
+      .map((exerciseId) => exercises.find((exercise) => exercise.id === exerciseId))
+      .filter(Boolean);
+
+    if (wrongPool.length === 0) {
+      showNotice('No se encontraron los ejercicios errados. Quizás fueron eliminados.');
+      return;
+    }
+
+    const orderedPool = buildOrderedPool(wrongPool, practiceRound.mode);
+
+    setPracticePool(orderedPool);
+    setCurrentIndex(0);
+    setCurrentExercise(orderedPool[0]);
+    setPracticeRound((currentRound) => ({
+      ...currentRound,
+      status: 'active',
+      isRetry: true,
+      passNumber: currentRound.passNumber + 1,
+      completedAt: null
+    }));
     clearAnswerState();
+    showNotice(`Repetición iniciada con ${orderedPool.length} ejercicio(s) errado(s).`);
   }
 
   function handleRestartPractice() {
     setPracticePool([]);
     setCurrentIndex(0);
     setCurrentExercise(null);
-    setSessionStats({ answered: 0, correct: 0, incorrect: 0 });
+    setPracticeRound(EMPTY_ROUND);
     clearAnswerState();
   }
 
   function requestRestartPractice() {
-    if (!currentExercise && practicePool.length === 0 && sessionStats.answered === 0) return;
+    if (!currentExercise && practiceRound.status === 'idle') return;
 
     askForConfirmation({
       title: 'Reiniciar práctica',
       message: 'Se va a reiniciar la sesión actual de práctica.',
-      detail: 'Se borra el ejercicio activo, el progreso de esta sesión y el puntaje de sesión. Las estadísticas globales ya guardadas se conservan.',
+      detail: 'Se borra el ejercicio activo y el progreso de esta ronda. Las estadísticas ya guardadas se conservan.',
       confirmText: 'Reiniciar práctica',
       onConfirm: () => {
         handleRestartPractice();
@@ -353,46 +501,119 @@ function App() {
     if (!currentExercise || corrected) return;
 
     const isCorrect = currentExercise.tieneError ? selectedLine === currentExercise.lineaError : selectedCodeIsOk;
+    const answeredAt = new Date().toISOString();
     const nextResult = {
       isCorrect,
-      answeredAt: new Date().toISOString()
+      answeredAt
+    };
+
+    const attempt = {
+      exerciseId: currentExercise.id,
+      materia: currentExercise.materia,
+      tema: currentExercise.tema,
+      dificultad: currentExercise.dificultad,
+      selectedLine,
+      selectedCodeIsOk,
+      correctLine: currentExercise.lineaError,
+      isCorrect,
+      answeredAt,
+      passNumber: practiceRound.passNumber,
+      isRetry: practiceRound.isRetry
     };
 
     setCorrected(true);
     setResult(nextResult);
 
-    const nextSessionStats = {
-      answered: sessionStats.answered + 1,
-      correct: sessionStats.correct + (isCorrect ? 1 : 0),
-      incorrect: sessionStats.incorrect + (isCorrect ? 0 : 1)
+    setPracticeRound((currentRound) => {
+      const nextResultsById = {
+        ...currentRound.resultsById,
+        [currentExercise.id]: attempt
+      };
+      const wrongIds = new Set(currentRound.wrongIds);
+
+      if (isCorrect) wrongIds.delete(currentExercise.id);
+      else wrongIds.add(currentExercise.id);
+
+      const latestResults = Object.values(nextResultsById);
+      const correct = latestResults.filter((item) => item.isCorrect).length;
+      const incorrect = latestResults.filter((item) => !item.isCorrect).length;
+
+      return {
+        ...currentRound,
+        resultsById: nextResultsById,
+        wrongIds: Array.from(wrongIds),
+        attempts: [attempt, ...currentRound.attempts],
+        answered: latestResults.length,
+        correct,
+        incorrect
+      };
+    });
+  }
+
+  function handleFinishRound() {
+    if (practiceRound.status !== 'summary' || practiceRound.total === 0) return;
+
+    const savedAt = new Date().toISOString();
+    const percent = calculatePercent(practiceRound.correct, practiceRound.total);
+    const latestWrongResults = Object.values(practiceRound.resultsById || {}).filter((item) => !item.isCorrect);
+
+    let errorsByMateria = stats.errorsByMateria;
+    let errorsByTema = stats.errorsByTema;
+    let errorsByDificultad = stats.errorsByDificultad;
+
+    latestWrongResults.forEach((item) => {
+      errorsByMateria = incrementMapValue(errorsByMateria, item.materia);
+      errorsByTema = incrementMapValue(errorsByTema, item.tema);
+      errorsByDificultad = incrementMapValue(errorsByDificultad, item.dificultad);
+    });
+
+    const roundRecord = {
+      id: `round-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      savedAt,
+      startedAt: practiceRound.startedAt,
+      completedAt: practiceRound.completedAt || savedAt,
+      filters: cloneFilters(practiceRound.filters),
+      mode: practiceRound.mode,
+      total: practiceRound.total,
+      correct: practiceRound.correct,
+      incorrect: practiceRound.incorrect,
+      percent
     };
-    setSessionStats(nextSessionStats);
 
     const nextStats = {
       ...stats,
-      answered: stats.answered + 1,
-      correct: stats.correct + (isCorrect ? 1 : 0),
-      incorrect: stats.incorrect + (isCorrect ? 0 : 1),
-      errorsByMateria: isCorrect ? stats.errorsByMateria : incrementMapValue(stats.errorsByMateria, currentExercise.materia),
-      errorsByTema: isCorrect ? stats.errorsByTema : incrementMapValue(stats.errorsByTema, currentExercise.tema),
-      errorsByDificultad: isCorrect ? stats.errorsByDificultad : incrementMapValue(stats.errorsByDificultad, currentExercise.dificultad),
-      history: [
-        {
-          exerciseId: currentExercise.id,
-          materia: currentExercise.materia,
-          tema: currentExercise.tema,
-          dificultad: currentExercise.dificultad,
-          selectedLine,
-          selectedCodeIsOk,
-          correctLine: currentExercise.lineaError,
-          isCorrect,
-          answeredAt: nextResult.answeredAt
-        },
-        ...stats.history
-      ].slice(0, 30)
+      answered: stats.answered + practiceRound.total,
+      correct: stats.correct + practiceRound.correct,
+      incorrect: stats.incorrect + practiceRound.incorrect,
+      errorsByMateria,
+      errorsByTema,
+      errorsByDificultad,
+      rounds: [roundRecord, ...(stats.rounds || [])].slice(0, 50),
+      history: practiceRound.attempts
+        .map((item) => ({
+          ...item,
+          savedRoundId: roundRecord.id
+        }))
+        .concat(stats.history || [])
+        .slice(0, 30)
     };
 
     persistStats(nextStats);
+    handleRestartPractice();
+    showNotice(`Ronda guardada: ${practiceRound.correct}/${practiceRound.total} correctas (${percent}%).`);
+  }
+
+  function handleLoadRoundFilters(round) {
+    const nextFilters = cloneFilters(round.filters);
+    const nextMode = round.mode || 'sequential';
+
+    setFilters(nextFilters);
+    setMode(nextMode);
+    startPractice(nextFilters, nextMode);
+
+    window.setTimeout(() => {
+      document.getElementById('practicar')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
   }
 
   return (
@@ -494,7 +715,7 @@ function App() {
             mode={mode}
             onChangeFilters={setFilters}
             onChangeMode={setMode}
-            onStart={startPractice}
+            onStart={() => startPractice(filters, mode)}
             disabled={exercises.length === 0}
           />
 
@@ -515,31 +736,37 @@ function App() {
                 <strong>{currentExercise && practicePool.length ? `${currentIndex + 1}/${practicePool.length}` : '0/0'}</strong>
               </div>
               <div>
-                <span>Puntaje</span>
-                <strong>{sessionStats.correct}/{sessionStats.answered}</strong>
+                <span>Puntaje ronda</span>
+                <strong>{practiceRound.correct}/{practiceRound.total || 0}</strong>
               </div>
               <div>
-                <span>Acierto</span>
-                <strong>{sessionPercent}%</strong>
+                <span>Acierto ronda</span>
+                <strong>{roundPercent}%</strong>
               </div>
             </div>
           </section>
         </section>
 
-        <ExerciseCard
-          exercise={currentExercise}
-          selectedLine={selectedLine}
-          selectedCodeIsOk={selectedCodeIsOk}
-          corrected={corrected}
-          result={result}
-          onSelectLine={handleSelectLine}
-          onSelectCodeIsOk={handleSelectCodeIsOk}
-          onCorrect={handleCorrect}
-          onNextExercise={nextExercise}
-          onRandomExercise={randomExercise}
-          onRestartPractice={requestRestartPractice}
-          canUseRandom={exercises.length > 0}
-        />
+        {practiceRound.status === 'summary' ? (
+          <RoundSummary round={practiceRound} onRetryWrong={handleRepeatWrong} onFinishRound={handleFinishRound} />
+        ) : (
+          <ExerciseCard
+            exercise={currentExercise}
+            selectedLine={selectedLine}
+            selectedCodeIsOk={selectedCodeIsOk}
+            corrected={corrected}
+            result={result}
+            onSelectLine={handleSelectLine}
+            onSelectCodeIsOk={handleSelectCodeIsOk}
+            onCorrect={handleCorrect}
+            onNextExercise={nextExercise}
+            onRandomExercise={requestStartRandomPractice}
+            onRestartPractice={requestRestartPractice}
+            canUseRandom={exercises.length > 0}
+            canGoNext={corrected}
+            nextButtonText={currentPassFinished ? 'Ver resumen' : 'Siguiente ejercicio'}
+          />
+        )}
 
         <ManageExercises
           exercises={exercises}
@@ -550,7 +777,7 @@ function App() {
           onResetAll={handleResetAll}
         />
 
-        <StatsPanel stats={stats} onResetStats={handleResetStats} />
+        <StatsPanel stats={stats} packs={packs} onResetStats={handleResetStats} onLoadRoundFilters={handleLoadRoundFilters} />
       </main>
 
       <ConfirmDialog dialog={confirmDialog} onCancel={closeConfirmDialog} onConfirm={runConfirmedAction} />

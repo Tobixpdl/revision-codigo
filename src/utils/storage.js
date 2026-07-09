@@ -11,7 +11,8 @@ export const EMPTY_STATS = {
   errorsByMateria: {},
   errorsByTema: {},
   errorsByDificultad: {},
-  history: []
+  history: [],
+  rounds: []
 };
 
 function safeParse(value, fallback) {
@@ -57,7 +58,8 @@ export function loadStats() {
     errorsByMateria: stats?.errorsByMateria || {},
     errorsByTema: stats?.errorsByTema || {},
     errorsByDificultad: stats?.errorsByDificultad || {},
-    history: Array.isArray(stats?.history) ? stats.history : []
+    history: Array.isArray(stats?.history) ? stats.history : [],
+    rounds: Array.isArray(stats?.rounds) ? stats.rounds : []
   };
 }
 
@@ -65,7 +67,8 @@ export function saveStats(stats) {
   write(STORAGE_KEYS.stats, {
     ...EMPTY_STATS,
     ...stats,
-    history: Array.isArray(stats?.history) ? stats.history.slice(0, 30) : []
+    history: Array.isArray(stats?.history) ? stats.history.slice(0, 30) : [],
+    rounds: Array.isArray(stats?.rounds) ? stats.rounds.slice(0, 50) : []
   });
 }
 

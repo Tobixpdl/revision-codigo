@@ -29,7 +29,9 @@ export default function ExerciseCard({
   onNextExercise,
   onRandomExercise,
   onRestartPractice,
-  canUseRandom
+  canUseRandom,
+  canGoNext = false,
+  nextButtonText = 'Siguiente ejercicio'
 }) {
   if (!exercise) {
     return (
@@ -41,11 +43,11 @@ export default function ExerciseCard({
           </div>
 
           <div className="exercise-header-actions" aria-label="Acciones de práctica">
-            <HeaderIconButton label="Ejercicio aleatorio" icon="🎲" onClick={onRandomExercise} disabled={!canUseRandom} />
+            <HeaderIconButton label="Empezar ronda aleatoria" icon="🎲" onClick={onRandomExercise} disabled={!canUseRandom} />
           </div>
         </div>
 
-        <p>Elegí filtros y tocá “Empezar” para practicar. También podés usar el dado para abrir un ejercicio aleatorio.</p>
+        <p>Elegí filtros y tocá “Empezar” para practicar. También podés usar el dado para empezar una ronda aleatoria.</p>
       </section>
     );
   }
@@ -76,7 +78,7 @@ export default function ExerciseCard({
           </div>
 
           <div className="exercise-header-actions" aria-label="Acciones de práctica">
-            <HeaderIconButton label="Ejercicio aleatorio" icon="🎲" onClick={onRandomExercise} disabled={!canUseRandom} />
+            <HeaderIconButton label="Empezar ronda aleatoria" icon="🎲" onClick={onRandomExercise} disabled={!canUseRandom} />
             <HeaderIconButton label="Reiniciar práctica" icon="↻" onClick={onRestartPractice} />
           </div>
         </div>
@@ -103,8 +105,8 @@ export default function ExerciseCard({
           </button>
         </div>
 
-        <button type="button" className="secondary-button next-exercise-button" onClick={onNextExercise}>
-          Siguiente ejercicio
+        <button type="button" className="secondary-button next-exercise-button" onClick={onNextExercise} disabled={!canGoNext}>
+          {nextButtonText}
         </button>
       </div>
 

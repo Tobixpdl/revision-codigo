@@ -30,8 +30,23 @@ function ErrorTable({ title, data }) {
   );
 }
 
-export default function StatsPanel({ stats, onResetStats }) {
+function getPackName(packId, packs) {
+  if (!packId) return 'Todos';
+  return packs.find((pack) => pack.id === packId)?.packName || `Pack ${packId}`;
+}
+
+function formatFilterSummary(filters = {}, packs = []) {
+  return [
+    `Pack: ${getPackName(filters.packId, packs)}`,
+    `Materia: ${filters.materia || 'Todas'}`,
+    `Tema: ${filters.tema || 'Todos'}`,
+    `Dificultad: ${filters.dificultad || 'Todas'}`
+  ].join(' · ');
+}
+
+export default function StatsPanel({ stats, packs = [], onResetStats, onLoadRoundFilters }) {
   const percent = calculatePercent(stats.correct, stats.answered);
+  const rounds = Array.isArray(stats.rounds) ? stats.rounds : [];
 
   return (
     <section className="card stats-card" id="estadisticas">
@@ -40,7 +55,7 @@ export default function StatsPanel({ stats, onResetStats }) {
           <p className="eyebrow">Rendimiento</p>
           <h2>Estadísticas</h2>
         </div>
-        <button type="button" className="secondary-button" onClick={onResetStats} disabled={stats.answered === 0}>
+        <button type="button" className="secondary-button" onClick={onResetStats} disabled={stats.answered === 0 && rounds.length === 0}>
           Resetear estadísticas
         </button>
       </div>
@@ -68,6 +83,31 @@ export default function StatsPanel({ stats, onResetStats }) {
         <ErrorTable title="Errores por materia" data={stats.errorsByMateria} />
         <ErrorTable title="Errores por tema" data={stats.errorsByTema} />
         <ErrorTable title="Errores por dificultad" data={stats.errorsByDificultad} />
+      </div>
+
+      <div className="history-box">
+        <h3>Rondas guardadas</h3>
+        {rounds.length === 0 ? (
+          <p className="muted">Todavía no hay rondas guardadas. Al terminar una práctica, aparece acá.</p>
+        ) : (
+          <ul>
+            {rounds.slice(0, 10).map((round) => (
+              <li key={round.id}>
+                <strong>
+                  {round.correct}/{round.total} correctas · {round.percent}%
+                </strong>{' '}
+                · {round.incorrect} incorrectas · {new Date(round.savedAt).toLocaleString('es-AR')}
+                <br />
+                <span className="muted small-text">{formatFilterSummary(round.filters, packs)}</span>
+                <div className="button-row">
+                  <button type="button" className="secondary-button" onClick={() => onLoadRoundFilters(round)}>
+                    Practicar otra vez con estos filtros
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <div className="history-box">

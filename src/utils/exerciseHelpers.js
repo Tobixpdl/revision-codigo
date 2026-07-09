@@ -457,6 +457,17 @@ export function getRandomExercise(exercises) {
   return exercises[index];
 }
 
+export function shuffleExercises(exercises) {
+  const shuffled = [...exercises];
+
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]];
+  }
+
+  return shuffled;
+}
+
 export function resolveDuplicateIds(incomingExercises, existingExercises) {
   const usedIds = new Set(existingExercises.map((exercise) => exercise.id));
   const counterByOriginalId = {};
